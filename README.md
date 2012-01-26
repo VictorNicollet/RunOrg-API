@@ -17,93 +17,86 @@ You MUST authenticate every request by appending the SHA1-HMAC of that request. 
   - The contents of the HTTP `Date:` header, in `'D, d M Y H:i:s \G\M\T'` format, followed by `\r\n` 
   - If the request includes a payload (`POST` and `PUT` requests do), the payload.
 
-**Example 1**: if you send a GET request to:
+**Example 1**: a GET request and the corresponding canonical string
 
     curl https://api.runorg.com/TheAppIdent/user/38421668914?auth=<HMAC>
-
-Then `<hmac>` will be the SHA1-HMAC of your app-key and this string :
 
     GET /TheAppIdent/user/38421668914\r\n
     Mon, 19 Nov 2007 23:47:33 GMT\r\n
 
-**Example 2**: if you send a PUT request to: 
+**Example 2**: a PUT request and the corresponding canonical string
 
     curl -X PUT https://api.runorg.com/TheAppIdent/user/38421668914/email?auth=<HMAC> \
       -d '{"value":"test@example.com"}'
 
-Then `<hmac>` will be the SHA1-HMAC of your app-key and this string :
- 
     PUT /TheAppIdent/user/38421668914/email\r\n
     Mon, 19 Nov 2007 23:47:33 GMT\r\n
     {"value":"test@example.com"}
 
-If the HMAC does not match the request, the server responds with : 
-
-    HTTP/1.1 400 Bad Request 
-    ...
-    { "error":"auth", "hmac":"...", "raw":"..." }
-
-The `hmac` field contains the received HMAC, and `raw` contains the request placed in canonical format that the server used to compute the HMAC, so that you may check it against your own canonical format. 
-
-If the HMAC matches the request, but the date header is off by more than 10 minutes, the server responds with : 
-
-    HTTP/1.1 400 Bad Request
-    ...
-    { "error":"date", "date":"...", "offset": ... }
-
-The `date` field echoes the contents of the `Date:` HTTP header on the request, and `offset` field contains the offset between that time and the time when it was received by the server, in seconds (positive values means the request arrived too long after the expected time).
-
-If the HMAC matches the request and the date header is valid, the request is considered to come from your server, and processing will commence. 
+If the HMAC does not match the request, or if the date header is off by more than 10 minutes, the server responds with HTTP/1.1 400 BAd Request.
 
 ## Contexts ##
 
-A given resource may be accessed in several contexts, which may determine whether an operation is possible or how it is performed. The context appears in the resource identifier. Context information includes: 
+The structure of almost every API URL is as follows: 
+
+    https://api.runorg.com/TheAppIdent/[context]/[resource]/[filter]
+
+The context is a well-defined set of values that determine what the resource is and whether it is accessible. These values are, in that order: 
 
   - What organization the application is working on (`/in/<id>`). 
-  - What user the application is working as (`/as/<id>`). 
-  - What entity the application is working on (`/on/<id>`).
+  - What user the application is working as (`/as/<id>`).
+  - What user the application is working *on* (`/user/<id>`). 
+  - What entity the application is working on (`/entity/<id>`).
 
-**Example 1**: working on organization 42 as user 1337 to read the profile information of user 666, one would use the following:
+**Example**: working on organization 42 as user 1337 to read the profile information of user 666, one would use the following:
 
     GET https://api.runorg.com/TheAppIdent/as/1337/in/42/user/666/profile
 
-The relative order of context identifiers is irrelevant as long as they appear in first position in the path. 
-
-**Example 2**: this is equivalent to the example above.
-
-    GET https://api.runorg.com/TheAppIdent/in/42/as/1337/user/666/profile
-
-These examples would return the information that user 1337 can see about user 666 in organization 42. 
+This examples would return the information that user 1337 can see about user 666 in organization 42. 
 
 ## Territory ##
 
-Users and organizations must allow your application to perform operations before you can perform them. A *territory* is a description of a set of possible operations. 
+Users and organizations must allow your application to perform operations before you can perform them. They do so by providing your application with *territories*.
 
-**Example**: If your application must be able to see user profile information for all users of an organization, the corresponding territory request would be: 
+A *territory* is a resource identifier path filled with wildcards, along with the allowed methods on that resource. If you perform a request and the path for that request matches at least one of your territories, then you are allowed to perform it.
 
-    GET /in/*/user/*/profile
+**Example 1**: In order to see the profiles for all the users in organization 42, your application needs the following territory: 
 
-This request would have to be accepted by an organization administrator. 
+    "/in/42/user/*/profile" : ["GET"]
 
-If your application needs to access user profiles, but only for users that are members of a certain entity, it would be: 
+Your application needs to list all territories that might be useful. This involves a different wildcard character `#` that may only appear as part of `/in/#/`, `/as/#/` and `/entity/#/` contexts. The meaning of `#` is &laquo;If you wish to use the application in this context, you must grant me this territory first.&raquo;
 
-    GET /on/*/user/*/profile
+**Example 2**: In order to be granted the territory from the previous example, an application would have to provide the following territory request: 
 
-This is a more restrictive territory, but it is safer for the user (as they can grant you access on a per-entity basis instead of opening up their entire member directory to you), and you only need the assent of an entity manager (as opposed to the organization administrators themselves). 
+    "/in/#/user/*/profile" : ["GET"]
+
+This means that an **organization administrator** may install your application for the **entire organization**, and this will involve granting the application the ability to see all user profiles in that organization.
+
+**Example 3**: if you only require access to be granted for individual entities, you may instead require: 
+
+    "/in/#/entity/#/user/*/profile" : ["GET"]
+
+This means that an **entity administrator** may install your application for the **entity**.
+
+**Example 4**: the least level of access is acting as an user: 
+
+    "/in/#/as/#/user/*/profile"
+
+This means that **any user** may install your application. Of course, you can only see what they can see and do what they can do!
 
 Similarly, `/as/*/` territories are even more restrictive, but you only need the assent of the user themselves. 
 
 The list of current territory requests for your applications can be found at: 
 
-    GET https://api.runorg.com/TheAppIdent/territories
+    GET https://api.runorg.com/TheAppIdent/territory-requests
 
     {
       "optional": {
-        "/in/*/user/*/profile/" : ["GET","PUT"]
-        "/in/*/as/*/user/*/profile/" : ["GET","PUT"]
+        "/in/#/user/*/profile/"      : ["GET","PUT"]
+        "/in/#/as/#/user/*/profile/" : ["GET","PUT"]
       },
       "required": {
-        "/in/*/on/*/user/*/profile/" : ["GET"]
+        "/in/#/entity/#/user/*/profile/" : ["GET"]
       }
     }
 
